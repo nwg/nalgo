@@ -26,7 +26,7 @@
   
 (define (bit-vector->ords bv)
   (in-generator
-    (for ([bit (in-bit-vector bv)]
+    (for ([bit bv]
           [i (in-naturals)]
           #:when bit)
       (yield i))))
@@ -34,7 +34,7 @@
 ; Implementation of lotto-meta hueristic search for generic uniform set coverage
 ; From the paper "Heuristic algorithm for solving the integer programming of the lottery problem"
 ; (See https://www.sciencedirect.com/science/article/pii/S1026309812000909)
-(define (uniform-scp p num-rows rows num-cols cols)
+(define (uniform-scp p num-rows rows num-cols cols nonzeros-per-column)
   (printf "Computing coefficients\n")
   (let ([M (coefficient-matrix p num-rows rows num-cols cols)])
     (printf "Done computing coefficients\n")
@@ -56,50 +56,50 @@
 
     (define (all-cols-set)
       (for/seteqv ([j (in-range 0 num-cols)]) j))
-    
-    (define (constructive rows cols)
-      (let ([I (set-copy rows)]
+
+    (define (constructive rows cols #:is-full-search [is-full-search #f])
+      (let ([I (bit-vector-copy rows)]
+            [J (bit-vector-copy cols)]
             [X (mutable-seteqv)]
-            [d (make-vector num-cols 0)]
-            [J (set-copy cols)])
-        
-        (let ([rows (set-immutable-copy rows)])
-          (for ([j J])
-            (let ([Dj (for/seteqv ([o (bit-vector->ords (D j))]) o)])
-              (vector-set! d j (set-count (set-intersect rows Dj))))))
+            [d (make-vector num-cols (if is-full-search nonzeros-per-column 0))])
+
+        (when (not is-full-search)
+          (for ([i (bit-vector->ords I)])
+            (for ([j (bit-vector->ords (S i))])
+              (vector-set! d j (add1 (vector-ref d j))))))
 
         (define (select-ticket)
-          (printf "Selecting ticket\n")
-          (let* ([uncovered (sequence-map (λ (j) (vector-ref d j)) J)]
+
+          (let* ([uncovered (sequence-map (λ (j) (vector-ref d j)) (bit-vector->ords J))]
                  [f (sequence-max uncovered)]
-                 [J-candidates (sequence-filter (λ (j) (= (vector-ref d j) f)) J)]
+                 [J-candidates (sequence->list (sequence-filter (λ (j) (= (vector-ref d j) f)) (bit-vector->ords J)))]
                  [w (sequence-random-element J-candidates)])
             w))
         
         (define (process-ticket w)
-          (printf "Processing ticket ~a\n" w)
           (set-add! X w)
-          (set-remove! J w)
+          (bit-vector-set! J w #f)
 
-          (for ([i (bit-vector->ords (D w))]
-                #:when (set-member? I i))
-            (for ([j (bit-vector->ords (S i))])
-              (vector-set! d j (sub1 (vector-ref d j))))
-            (set-remove! I i))
-
-          (printf "Finished processing ticket ~a\n" w))
+          (let ([Dw (D w)])
+            (for ([row-bit I]
+                  [cover-bit Dw]
+                  [i (in-naturals)]
+                  #:when (and row-bit cover-bit))
+              (for ([j (bit-vector->ords (S i))])
+                (vector-set! d j (sub1 (vector-ref d j))))
+              (bit-vector-set! I i #f))))
 
         (let ([w (select-ticket)])
           (process-ticket w)
 
           (let loop ()
-            (if (set-empty? I)
-              (let* ([R (redundant X)])
-                (set-subtract! X R)
-                (set-immutable-copy X))
-              (let* ([w (select-ticket)])
-                (process-ticket w)
-                (loop)))))))
+            (if (= (bit-vector-popcount I) 0)
+                (let* ([R (redundant X)])
+                  (set-subtract! X R)
+                  (set-immutable-copy X))
+                (let* ([w (select-ticket)])
+                  (process-ticket w)
+                  (loop)))))))
 
     (define (redundant X)
       (let ([result (mutable-seteqv)]
@@ -123,20 +123,19 @@
           (let ([e (set-random-element s)])
             (set-remove! s e))
           (set-random-removal s (sub1 amt))))
-      
-      (let ([Xp (set-copy X)]
-            [D* (set-copy rows)]
-            [S* (mutable-seteqv)])
-        (set-random-removal Xp remove-col)
-        (printf "Dropped tickets ~a\n" (set-subtract (set-immutable-copy X) Xp))
-        (for* ([j Xp]
-               [i (bit-vector->ords (D j))])
-          (set-remove! D* i))
-        (for* ([i D*]
-               [j (bit-vector->ords (S i))])
-          (set-add! S* j))
 
-        (let ([X* (constructive D* S*)])
+      (let ([Xp (set-copy X)]
+            [D* (bit-vector-copy rows)]
+            [S* (make-bit-vector (bit-vector-length cols) #f)])
+        (set-random-removal Xp remove-col)
+        (for ([j Xp])
+          (for ([i (bit-vector->ords (D j))])
+            (bit-vector-set! D* i #f)))
+        (for* ([i (bit-vector->ords D*)]
+               [j (bit-vector->ords (S i))])
+          (bit-vector-set! S* j #t))
+         
+        (let ([X* (constructive D* S* #:is-full-search #f)])
           (set-union! Xp X*)
           (let ([R (redundant Xp)])
             (set-subtract! Xp R))
@@ -154,8 +153,8 @@
 
     (define (run max-constructive max-improvement max-total)
       (printf "Beginning run: |S|=~a, |D|=~a\n" num-cols num-rows)
-      (let* ([rows (all-rows-set)]
-             [cols (all-cols-set)])
+      (let* ([rows (make-bit-vector num-rows #t)]
+             [cols (make-bit-vector num-cols #t)])
 
         (define (perform-run)
           (let ([X #f])
@@ -203,10 +202,14 @@
   (define t 2)
   (define (p-matches row col)
     (>= (set-count (set-intersect row col)) 2))
-  
+
+  (define nonzeros-per-column
+    (for/sum ([m (in-range t (add1 (min k p)))])
+      (* (binomial k m) (binomial (- n k) (- p m)))))
+
   (let* ([tickets (λ () (sequence-map list->seteqv (subsets-universal n k)))]
          [draws (λ () (sequence-map list->seteqv (subsets-universal n p)))]
-         [solution (uniform-scp p-matches (binomial n p) draws (binomial n k) tickets)])
+         [solution (uniform-scp p-matches (binomial n p) draws (binomial n k) tickets nonzeros-per-column)])
     (printf "Uniform set coverage, length=~a tickets=~a\n" (length solution) (map (λ (ord) (ord->set ord n k)) solution))))
   
 
