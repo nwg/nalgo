@@ -57,10 +57,11 @@
     (define (all-cols-set)
       (for/seteqv ([j (in-range 0 num-cols)]) j))
 
-    (define (constructive rows cols #:d [d (make-vector num-cols nonzeros-per-column)])
+    (define (constructive rows cols #:d [d #f])
       (let ([I (bit-vector-copy rows)]
             [J (bit-vector-copy cols)]
-            [X (mutable-seteqv)])
+            [X (mutable-seteqv)]
+            [d (if d (vector-copy d) (make-vector num-cols nonzeros-per-column))])
 
         (define (select-ticket)
           (let* ([uncovered (sequence-map (λ (j) (vector-ref d j)) (bit-vector->ords J))]
