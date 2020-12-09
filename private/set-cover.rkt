@@ -57,19 +57,12 @@
     (define (all-cols-set)
       (for/seteqv ([j (in-range 0 num-cols)]) j))
 
-    (define (constructive rows cols #:is-full-search [is-full-search #f])
+    (define (constructive rows cols #:d [d (make-vector num-cols nonzeros-per-column)])
       (let ([I (bit-vector-copy rows)]
             [J (bit-vector-copy cols)]
-            [X (mutable-seteqv)]
-            [d (make-vector num-cols (if is-full-search nonzeros-per-column 0))])
-
-        (when (not is-full-search)
-          (for ([i (bit-vector->ords I)])
-            (for ([j (bit-vector->ords (S i))])
-              (vector-set! d j (add1 (vector-ref d j))))))
+            [X (mutable-seteqv)])
 
         (define (select-ticket)
-
           (let* ([uncovered (sequence-map (λ (j) (vector-ref d j)) (bit-vector->ords J))]
                  [f (sequence-max uncovered)]
                  [J-candidates (sequence->list (sequence-filter (λ (j) (= (vector-ref d j) f)) (bit-vector->ords J)))]
@@ -126,16 +119,18 @@
 
       (let ([Xp (set-copy X)]
             [D* (bit-vector-copy rows)]
-            [S* (make-bit-vector (bit-vector-length cols) #f)])
+            [S* (make-bit-vector (bit-vector-length cols) #f)]
+            [d (make-vector (bit-vector-length cols) 0)])
         (set-random-removal Xp remove-col)
         (for ([j Xp])
           (for ([i (bit-vector->ords (D j))])
             (bit-vector-set! D* i #f)))
         (for* ([i (bit-vector->ords D*)]
                [j (bit-vector->ords (S i))])
-          (bit-vector-set! S* j #t))
+          (bit-vector-set! S* j #t)
+          (vector-set! d j (add1 (vector-ref d j))))
          
-        (let ([X* (constructive D* S* #:is-full-search #f)])
+        (let ([X* (constructive D* S* #:d d)])
           (set-union! Xp X*)
           (let ([R (redundant Xp)])
             (set-subtract! Xp R))
