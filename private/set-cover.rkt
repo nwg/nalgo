@@ -31,11 +31,13 @@
           #:when bit)
       (yield i))))
 
+; Implementation of lotto-meta hueristic search for generic uniform set coverage
+; From the paper "Heuristic algorithm for solving the integer programming of the lottery problem"
+; (See https://www.sciencedirect.com/science/article/pii/S1026309812000909)
 (define (uniform-scp p num-rows rows num-cols cols)
   (printf "Computing coefficients\n")
   (let ([M (coefficient-matrix p num-rows rows num-cols cols)])
     (printf "Done computing coefficients\n")
-
 
     (define (a i j)
       (let ([bv (vector-ref M j)])
@@ -48,9 +50,6 @@
     
     (define (D j)
       (vector-ref M j))
-
-    ;(printf "(D 0)=~a\n" (bit-vector->list (D 0)))
-    ;(printf "(D 1)=~a\n" (bit-vector->list (D 1)))
 
     (define (all-rows-set)
       (for/seteqv ([i (in-range 0 num-rows)]) i))
